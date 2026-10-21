@@ -137,3 +137,4 @@ print("Test:", len(test_trees))
 
 # print(train_trees[1])
 
+# print(splits["train"])
