@@ -1,8 +1,22 @@
 from collections import Counter, defaultdict
 from math import log
+
 from nltk.grammar import Nonterminal
 from nltk.tree import Tree
-from data import train_trees, test_trees
+
+
+def replace_rare_words(trees, cutoff=1):
+    word_counts = Counter(word for tree in trees for word in tree.leaves())
+    changed_trees = []
+
+    for tree in trees:
+        changed = tree.copy(deep=True)
+        for position in changed.treepositions("leaves"):
+            if word_counts[changed[position]] <= cutoff:
+                changed[position] = "<UNK>"
+        changed_trees.append(changed)
+
+    return changed_trees
 
 
 def to_cnf(tree, markov_order=0):
@@ -100,7 +114,8 @@ def parse_sentence(words, lexical_rules, binary_rules, root_counts):
     chart = [[{} for _ in range(n + 1)] for _ in range(n)]
 
     for i, word in enumerate(words):
-        rules = lexical_rules.get(word, [])
+        lookup_word = word if word in lexical_rules else "<UNK>"
+        rules = lexical_rules.get(lookup_word, [])
         if not rules:
             return None
 
@@ -169,23 +184,29 @@ def get_brackets(tree, labeled=True):
     return brackets
 
 
-def evaluate_parser(test_trees, lexical_rules, binary_rules, root_counts):
+def evaluate_parser(test_trees, lexical_rules, binary_rules, root_counts,
+                    training_vocabulary):
     totals = {
         "labeled": Counter(),
         "unlabeled": Counter(),
     }
     parsed_count = 0
     unseen_word_sentences = 0
+    sentences_using_unk = 0
+    test_predictions = []
 
     for gold_tree in test_trees:
         words = gold_tree.leaves()
 
-        if any(word not in lexical_rules for word in words):
+        if any(word not in training_vocabulary for word in words):
             unseen_word_sentences += 1
+        if any(word not in lexical_rules for word in words):
+            sentences_using_unk += 1
 
         predicted_tree = parse_sentence(
             words, lexical_rules, binary_rules, root_counts
         )
+        test_predictions.append(predicted_tree)
 
         if predicted_tree is not None:
             parsed_count += 1
@@ -206,6 +227,7 @@ def evaluate_parser(test_trees, lexical_rules, binary_rules, root_counts):
     results = {
         "test_sentences": len(test_trees),
         "sentences_with_unseen_words": unseen_word_sentences,
+        "sentences_using_unk": sentences_using_unk,
         "complete_parses": parsed_count,
     }
 
@@ -226,35 +248,34 @@ def evaluate_parser(test_trees, lexical_rules, binary_rules, root_counts):
             "f1": f1,
         }
 
-    return results
+    return results, test_predictions
+
 
 if __name__ == "__main__":
-    # from src.data import train_trees, test_trees
+    from data import train_trees, test_trees
 
-    train_cnf = [to_cnf(tree, markov_order=0) for tree in train_trees]
-    counts = count_rules(train_cnf)
-    probabilities = estimate_rule_probabilities(counts)
-    lexical_rules, binary_rules = index_rules(probabilities)
-    root_counts = Counter(tree.label() for tree in train_cnf)
+    training_vocabulary = {
+        word for tree in train_trees for word in tree.leaves()
+    }
+    train_for_pcfg = replace_rare_words(train_trees, cutoff=1)
+    train_cnf_0 = [to_cnf(tree, markov_order=0) for tree in train_for_pcfg]
 
-    results = evaluate_parser(
-        test_trees, lexical_rules, binary_rules, root_counts
+    rule_counts = count_rules(train_cnf_0)
+    rule_probabilities = estimate_rule_probabilities(rule_counts)
+    lexical_rules, binary_rules = index_rules(rule_probabilities)
+    root_counts = Counter(tree.label() for tree in train_cnf_0)
+
+    results, test_predictions = evaluate_parser(
+        test_trees, lexical_rules, binary_rules, root_counts,
+        training_vocabulary,
     )
 
-    print("\n=== Task 1: PCFG and CKY ===")
-    print("Training trees:", len(train_trees))
-    print("Different rules:", len(counts))
-    print("Total rule uses:", sum(counts.values()))
-    print("Test sentences:", results["test_sentences"])
-    print("Sentences with unseen words:",
-          results["sentences_with_unseen_words"])
-    print("Complete parses:", results["complete_parses"])
-
+    print(f"Test sentences: {results['test_sentences']}")
+    print(f"Sentences with words absent from training: "
+          f"{results['sentences_with_unseen_words']}")
+    print(f"Sentences using <UNK>: {results['sentences_using_unk']}")
+    print(f"Complete parses: {results['complete_parses']}/{len(test_trees)}")
     for name in ("labeled", "unlabeled"):
         scores = results[name]
-        print(
-            f"{name.capitalize()}: "
-            f"P={scores['precision']:.3f}, "
-            f"R={scores['recall']:.3f}, "
-            f"F1={scores['f1']:.3f}"
-        )
+        print(f"{name.capitalize()}: P={scores['precision']:.3f}, "
+              f"R={scores['recall']:.3f}, F1={scores['f1']:.3f}")
