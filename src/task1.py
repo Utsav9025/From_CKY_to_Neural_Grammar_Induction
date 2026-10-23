@@ -304,3 +304,44 @@ if __name__ == "__main__":
         training_vocabulary,
     )
     print_results("Test", test_results)
+
+    order_0_models = {}
+    order_0_validation = {}
+
+    for cutoff in (1, 2):
+        rare_train = replace_rare_words(train_trees, cutoff=cutoff)
+        train_cnf_0 = [to_cnf(tree, markov_order=0) for tree in rare_train]
+
+        counts_0 = count_rules(train_cnf_0)
+        probabilities_0 = estimate_rule_probabilities(counts_0)
+        lexical_0, binary_0 = index_rules(probabilities_0)
+        roots_0 = Counter(tree.label() for tree in train_cnf_0)
+
+        order_0_models[cutoff] = (lexical_0, binary_0, roots_0)
+        results_0, _ = evaluate_parser(
+            validation_trees, lexical_0, binary_0, roots_0,
+            training_vocabulary,
+        )
+        order_0_validation[cutoff] = results_0
+
+    best_cutoff_0 = max(
+        order_0_validation,
+        key=lambda cutoff: order_0_validation[cutoff]["labeled"]["f1"],
+    )
+    lexical_0, binary_0, roots_0 = order_0_models[best_cutoff_0]
+    test_results_0, _ = evaluate_parser(
+        test_trees, lexical_0, binary_0, roots_0,
+        training_vocabulary,
+    )
+
+    print("\nMarkov order comparison")
+    print(f"{'Order':<7} {'Cutoff':<7} {'Val F1':<8} "
+          f"{'Test F1':<9} {'Unlabeled F1':<12} Parses")
+    for order, cutoff, validation, test in (
+        (0, best_cutoff_0, order_0_validation[best_cutoff_0], test_results_0),
+        (1, best_cutoff, validation_results[best_cutoff], test_results),
+    ):
+        parses = f"{test['complete_parses']}/{test['test_sentences']}"
+        print(f"{order:<7} {cutoff:<7} {validation['labeled']['f1']:<8.3f} "
+              f"{test['labeled']['f1']:<9.3f} "
+              f"{test['unlabeled']['f1']:<12.3f} {parses}")
