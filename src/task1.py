@@ -19,7 +19,7 @@ def replace_rare_words(trees, cutoff=1):
     return changed_trees
 
 
-def to_cnf(tree, markov_order=0):
+def to_cnf(tree, markov_order=1):
     converted = tree.copy(deep=True)
     converted.collapse_unary(collapsePOS=True, collapseRoot=True)
     converted.chomsky_normal_form(
@@ -275,12 +275,12 @@ if __name__ == "__main__":
 
     for cutoff in (1, 2):
         train_for_pcfg = replace_rare_words(train_trees, cutoff=cutoff)
-        train_cnf_0 = [to_cnf(tree, markov_order=0) for tree in train_for_pcfg]
+        train_cnf_1 = [to_cnf(tree, markov_order=1) for tree in train_for_pcfg]
 
-        rule_counts = count_rules(train_cnf_0)
+        rule_counts = count_rules(train_cnf_1)
         rule_probabilities = estimate_rule_probabilities(rule_counts)
         lexical_rules, binary_rules = index_rules(rule_probabilities)
-        root_counts = Counter(tree.label() for tree in train_cnf_0)
+        root_counts = Counter(tree.label() for tree in train_cnf_1)
 
         models[cutoff] = (lexical_rules, binary_rules, root_counts)
         results, _ = evaluate_parser(
@@ -289,7 +289,7 @@ if __name__ == "__main__":
         )
         validation_results[cutoff] = results
 
-        print(f"\nMarkov order 0, cutoff {cutoff}")
+        print(f"\nMarkov order 1, cutoff {cutoff}")
         print_results("Validation", results)
 
     best_cutoff = max(
