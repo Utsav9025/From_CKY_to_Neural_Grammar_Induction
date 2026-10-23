@@ -251,31 +251,56 @@ def evaluate_parser(test_trees, lexical_rules, binary_rules, root_counts,
     return results, test_predictions
 
 
-if __name__ == "__main__":
-    from data import train_trees, test_trees
-
-    training_vocabulary = {
-        word for tree in train_trees for word in tree.leaves()
-    }
-    train_for_pcfg = replace_rare_words(train_trees, cutoff=1)
-    train_cnf_0 = [to_cnf(tree, markov_order=0) for tree in train_for_pcfg]
-
-    rule_counts = count_rules(train_cnf_0)
-    rule_probabilities = estimate_rule_probabilities(rule_counts)
-    lexical_rules, binary_rules = index_rules(rule_probabilities)
-    root_counts = Counter(tree.label() for tree in train_cnf_0)
-
-    results, test_predictions = evaluate_parser(
-        test_trees, lexical_rules, binary_rules, root_counts,
-        training_vocabulary,
-    )
-
-    print(f"Test sentences: {results['test_sentences']}")
-    print(f"Sentences with words absent from training: "
+def print_results(split_name, results):
+    print(f"{split_name} sentences: {results['test_sentences']}")
+    print("Sentences with words absent from training: "
           f"{results['sentences_with_unseen_words']}")
     print(f"Sentences using <UNK>: {results['sentences_using_unk']}")
-    print(f"Complete parses: {results['complete_parses']}/{len(test_trees)}")
+    print(f"Complete parses: {results['complete_parses']}/{results['test_sentences']}")
+
     for name in ("labeled", "unlabeled"):
         scores = results[name]
         print(f"{name.capitalize()}: P={scores['precision']:.3f}, "
               f"R={scores['recall']:.3f}, F1={scores['f1']:.3f}")
+
+
+if __name__ == "__main__":
+    from data import train_trees, validation_trees, test_trees
+
+    training_vocabulary = {
+        word for tree in train_trees for word in tree.leaves()
+    }
+    models = {}
+    validation_results = {}
+
+    for cutoff in (1, 2):
+        train_for_pcfg = replace_rare_words(train_trees, cutoff=cutoff)
+        train_cnf_0 = [to_cnf(tree, markov_order=0) for tree in train_for_pcfg]
+
+        rule_counts = count_rules(train_cnf_0)
+        rule_probabilities = estimate_rule_probabilities(rule_counts)
+        lexical_rules, binary_rules = index_rules(rule_probabilities)
+        root_counts = Counter(tree.label() for tree in train_cnf_0)
+
+        models[cutoff] = (lexical_rules, binary_rules, root_counts)
+        results, _ = evaluate_parser(
+            validation_trees, lexical_rules, binary_rules, root_counts,
+            training_vocabulary,
+        )
+        validation_results[cutoff] = results
+
+        print(f"\nMarkov order 0, cutoff {cutoff}")
+        print_results("Validation", results)
+
+    best_cutoff = max(
+        validation_results,
+        key=lambda cutoff: validation_results[cutoff]["labeled"]["f1"],
+    )
+    print(f"\nChosen cutoff from validation F1: {best_cutoff}")
+
+    lexical_rules, binary_rules, root_counts = models[best_cutoff]
+    test_results, test_predictions = evaluate_parser(
+        test_trees, lexical_rules, binary_rules, root_counts,
+        training_vocabulary,
+    )
+    print_results("Test", test_results)
