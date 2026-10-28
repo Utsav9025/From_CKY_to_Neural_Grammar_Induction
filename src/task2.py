@@ -4,10 +4,10 @@ This uses the architecture, preprocessing, and checkpoint format of the
 Task 2 notebook. Training is opt-in; loading a checkpoint does not train.
 
 Examples (run with your virtual environment's Python):
-    python task2.py --checkpoint checkpoints/task2_best.pt --limit 3
-    python task2.py --checkpoint checkpoints/task2_best.pt --split test --decoder mbr
-    python task2.py --checkpoint checkpoints/task2_best.pt --text "The dog runs ."
-    python task2.py --train --batch-size 8 --epochs 15
+    python src/task2.py --device cpu --split test --decoder mbr
+    python src/task2.py --checkpoint checkpoints/task2_best.pt --limit 3
+    python src/task2.py --text "The dog runs ."
+    python src/task2.py --train --batch-size 8 --epochs 15 --device auto
 
 Dependencies: numpy, nltk, torch, and torch_struct (pytorch-struct).
 """
@@ -243,14 +243,45 @@ def read_checkpoint(path):
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(
-            f"Checkpoint not found: {path}. Download the .pt file from Drive "
-            "or use its mounted path in Colab."
+            f"Checkpoint not found: {path}. Put the saved .pt file in "
+            "checkpoints/ or pass its location with --checkpoint."
         )
     saved = torch.load(path, map_location="cpu", weights_only=True)
     for key in ("encoder", "grammar", "vocab"):
         if key not in saved:
             raise ValueError(f"Checkpoint is missing '{key}': {path}")
     return saved
+
+
+def find_checkpoint(path=None):
+    if path is not None:
+        checkpoint = Path(path).expanduser()
+        if not checkpoint.is_file():
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
+        return checkpoint
+
+    project_root = Path(__file__).resolve().parent.parent
+    names = (
+        "checkpoints/task2_best_epoch1_saved.pt",
+        "checkpoints/task2_best.pt",
+        "task2_best_epoch1_saved.pt",
+        "checkpoints/task2_batch8/task2_best.pt",
+    )
+    candidates = [base / name for base in (Path.cwd(), project_root) for name in names]
+    candidates.extend((
+        Path("/content/drive/MyDrive/From_CKY_to_Neural_Grammar_Induction/")
+        / "task2_best_epoch1_saved.pt",
+        Path("/content/drive/MyDrive/From_CKY_to_Neural_Grammar_Induction/")
+        / "task2_best.pt",
+    ))
+
+    for checkpoint in candidates:
+        if checkpoint.is_file():
+            return checkpoint
+    raise FileNotFoundError(
+        "No Task 2 checkpoint found. Put task2_best_epoch1_saved.pt in "
+        "checkpoints/, supply --checkpoint PATH, or train with --train."
+    )
 
 
 def make_models(vocab_size, device):
@@ -526,7 +557,8 @@ def evaluate(ids, gold_trees, decoder, encoder, grammar, device, show_tree=0, li
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--train", action="store_true", help="Train a new model (slow on CPU).")
-    parser.add_argument("--checkpoint", type=Path, help="Saved .pt file, local or on a mounted Drive.")
+    parser.add_argument("--checkpoint", type=Path,
+                        help="Saved .pt file; if omitted, search checkpoints/ and mounted Drive.")
     parser.add_argument("--resume", type=Path, help="Continue training from a saved checkpoint.")
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument("--split", choices=("validation", "test"), default="validation")
@@ -542,11 +574,9 @@ def main():
     if args.train and args.checkpoint:
         parser.error("Use --resume to continue training, or --checkpoint to evaluate.")
     if args.train and args.text:
-        parser.error("--text requires --checkpoint, without --train.")
+        parser.error("Use --text for evaluation, without --train.")
     if args.resume and not args.train:
         parser.error("--resume requires --train.")
-    if not args.train and not args.checkpoint:
-        parser.error("Specify --checkpoint for evaluation or --train to train.")
     if args.batch_size < 1 or args.epochs < 1 or (args.limit is not None and args.limit < 1):
         parser.error("--batch-size, --epochs, and --limit must be positive.")
     if args.show_tree < 0:
@@ -555,10 +585,14 @@ def main():
     device = choose_device(args.device)
     print("Device:", device)
     if args.train:
+        if device.type == "cpu":
+            print("Training on CPU may take a long time. A CUDA machine can use --device auto.")
         train(args, device)
         return
 
-    saved = read_checkpoint(args.checkpoint)
+    checkpoint_path = find_checkpoint(args.checkpoint)
+    saved = read_checkpoint(checkpoint_path)
+    print("Loaded checkpoint:", checkpoint_path)
     vocab = saved["vocab"]
     torch.manual_seed(42)
     encoder, grammar = make_models(len(vocab), device)
