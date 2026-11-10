@@ -1,0 +1,10 @@
+# Python 3.12. See README.md for the CPU or CUDA PyTorch build.
+numpy==2.3.5
+nltk==3.9.1
+torch==2.9.1
+torch-struct==0.5
+pandas==2.2.3
+matplotlib==3.10.8
+gdown==5.2.0
+ipython==9.16.1
+ipykernel==6.30.1
